@@ -34,7 +34,7 @@
      {
          vector<complex<double>> current_x(size);
          vector<complex<double>> current_r(size);
-
+          
          for (int i = 0; i < size; ++i)
          {
              current_x[i] = x[i];

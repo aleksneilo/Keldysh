@@ -1,0 +1,10 @@
+# V=eV_SI/Delta_SI; L_N=L/xi_S; I=eI_SI/(G_N*Delta_SI); dI/dV=G/G_N
+# L/xi_Delta=0.5292567428401227 Delta/E0=1.76 T/Tc=0 Ksi_N=1 ro_N=1 area=1 Xi=0
+# NF=2 Nx=25 Neps=16 eta/Delta=0.001
+# Central differences; second-order one-sided endpoints. Check grid convergence.
+# V	L_N	I	dI/dV
+3	1	4.344539541981694	2.747156779944631
+2.9	1	4.101850268957564	2.106628680537981
+2.8	1	3.923213805874098	1.574223172839751
+2.7	1	3.787005634389613	1.149940256849943
+# COMPLETE points=4 current_conservation_passed=1

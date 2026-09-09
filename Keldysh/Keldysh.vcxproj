@@ -22,7 +22,7 @@
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{4E946326-DEA0-4603-B292-17A3FA9A1B11}</ProjectGuid>
-    <RootNamespace>Fiparamprogramm</RootNamespace>
+    <RootNamespace>Keldysh</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -70,6 +70,9 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <TargetName>Keldysh</TargetName>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -138,12 +141,26 @@
     <ClCompile Include="self-const.cpp" />
     <ClCompile Include="self-const_ricatti.cpp" />
     <ClCompile Include="stdafx.cpp" />
+    <ClCompile Include="sns\spectral.cpp" />
+    <ClCompile Include="sns\kinetic.cpp" />
+    <ClCompile Include="sns\current.cpp" />
+    <ClCompile Include="sns\runner.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="SFS.h" />
     <ClInclude Include="SFS1.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="sns\sns.hpp" />
+    <ClInclude Include="sns\runner.hpp" />
+    <ClInclude Include="sns\matrix.hpp" />
+  </ItemGroup>
+  <ItemDefinitionGroup>
+    <ClCompile><LanguageStandard>stdcpp17</LanguageStandard></ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <None Include="sns\README.ru.md" />
+    <None Include="sns\VALIDATION.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Исходные файлы">
@@ -63,4 +63,15 @@
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <Filter Include="SNS Floquet"><UniqueIdentifier>{79194D8D-01A2-44E3-8888-1378C30FC911}</UniqueIdentifier></Filter>
+    <ClCompile Include="sns\spectral.cpp"><Filter>SNS Floquet</Filter></ClCompile>
+    <ClCompile Include="sns\kinetic.cpp"><Filter>SNS Floquet</Filter></ClCompile>
+    <ClCompile Include="sns\current.cpp"><Filter>SNS Floquet</Filter></ClCompile>
+    <ClInclude Include="sns\sns.hpp"><Filter>SNS Floquet</Filter></ClInclude>
+    <ClInclude Include="sns\matrix.hpp"><Filter>SNS Floquet</Filter></ClInclude>
+    <None Include="sns\README.ru.md"><Filter>SNS Floquet</Filter></None>
+    <None Include="sns\VALIDATION.md"><Filter>SNS Floquet</Filter></None>
+  </ItemGroup>
+  <ItemGroup><ClCompile Include="sns\runner.cpp"><Filter>SNS Floquet</Filter></ClCompile><ClInclude Include="sns\runner.hpp"><Filter>SNS Floquet</Filter></ClInclude></ItemGroup>
 </Project>

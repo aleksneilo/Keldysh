@@ -3,9 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.11.35327.3
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Fi_param_programm", "Fi_param_programm\Fi_param_programm.vcxproj", "{2522E248-0AE2-4284-8D21-DD33365F10D6}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "main", "Ricatti\main.vcxproj", "{4E946326-DEA0-4603-B292-17A3FA9A1B11}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Keldysh", "Keldysh\Keldysh.vcxproj", "{4E946326-DEA0-4603-B292-17A3FA9A1B11}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,14 +13,6 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Debug|x64.ActiveCfg = Debug|x64
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Debug|x64.Build.0 = Debug|x64
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Debug|x86.ActiveCfg = Debug|Win32
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Debug|x86.Build.0 = Debug|Win32
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Release|x64.ActiveCfg = Release|x64
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Release|x64.Build.0 = Release|x64
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Release|x86.ActiveCfg = Release|Win32
-		{2522E248-0AE2-4284-8D21-DD33365F10D6}.Release|x86.Build.0 = Release|Win32
 		{4E946326-DEA0-4603-B292-17A3FA9A1B11}.Debug|x64.ActiveCfg = Debug|x64
 		{4E946326-DEA0-4603-B292-17A3FA9A1B11}.Debug|x64.Build.0 = Debug|x64
 		{4E946326-DEA0-4603-B292-17A3FA9A1B11}.Debug|x86.ActiveCfg = Debug|Win32
