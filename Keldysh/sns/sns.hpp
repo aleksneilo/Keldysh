@@ -20,6 +20,17 @@ struct NumericalParams {
     double eta=0.00176, mixing=0.15, tolerance=1e-8;
     double residual_tolerance=1e-6, kinetic_tolerance=1e-6;
     int continuation_steps=4;
+    bool adaptive_energy=false, energy_verbose=false;
+    bool energy_use_anchors=false, spectral_verbose=false;
+    double energy_gap_skip_width=0; // 0 disables; -1 selects 5*eta; positive is explicit E0 width.
+    int energy_base_intervals=32, energy_max_refinement=12, energy_recovery_steps=6;
+    int energy_max_evaluations=32768, energy_recovery_attempts=24;
+    double energy_refinement_factor=2.0, energy_gap_width=0.088;
+    double energy_min_step=1e-7, gap_edge_avoidance=1e-9;
+    double energy_integration_tolerance=1e-4;
+    bool energy_allow_interpolation=true;
+    double energy_interpolation_max_width=0.00176;
+    double energy_interpolation_max_variation=0.05;
     int energy_threads=1; // 0: hardware threads minus one; 1: serial; >1: explicit count.
     bool use_anderson=false, anderson_verbose=false;
     int anderson_depth=4, anderson_start=2;
@@ -38,7 +49,22 @@ struct Distribution { Field x,tilde; double residual=0; };
 struct KeldyshBlocks { std::vector<Matrix> lower,diagonal,upper,rhs; };
 struct SparseEntry { int row,col; Complex value; };
 // current = e*rho_S*I_SI/(k_B*Tc*xi_S), not amperes; normal current=conductance()*voltage.
-struct CurrentResult { double voltage=0,current=0,conservation_error=0,max_spectral_residual=0,max_kinetic_residual=0; std::vector<double> probe_currents; };
+struct EnergyDiagnostics {
+    size_t intervals=0, leaf_intervals=0, direct_points=0, refined_points=0;
+    size_t recovered_points=0, interpolated_points=0, quadrature_points=0;
+    unsigned workers=1;
+    double max_interpolation_width=0, estimated_error=0;
+    size_t gap_skipped_points=0, gap_interpolated_intervals=0, unbracketed_gap_zones=0;
+    size_t cold_starts=0, seeded_starts=0, successful_cold_starts=0, successful_seeded_starts=0;
+    size_t failed_spectral_solves=0, total_spectral_iterations=0, max_spectral_iterations=0;
+    size_t cold_spectral_iterations=0, seeded_spectral_iterations=0;
+    double total_energy_time=0, spectral_time=0, kinetic_time=0, recovery_time=0;
+    double gap_interpolation_indicator=0;
+};
+struct EnergyCacheEntry { double epsilon=0; PairField amplitudes; };
+struct EnergyCache { double voltage=0; std::vector<EnergyCacheEntry> entries; };
+struct CurrentResult {
+    double voltage=0,current=0,conservation_error=0,max_spectral_residual=0,max_kinetic_residual=0; std::vector<double> probe_currents; EnergyDiagnostics energy; };
 struct ConvergenceResult { std::string parameter; double baseline,refined,relative_change; bool passed; };
 
 void validate(const PhysicalParams&,const NumericalParams&,double voltage);
@@ -66,7 +92,7 @@ std::vector<SparseEntry> assemble_keldysh_sparse(const KeldyshBlocks&);
 Distribution solve_distribution_x(const SpectralSolution&,double epsilon,double voltage,const PhysicalParams&,const NumericalParams&);
 double compute_spectral_current(const Field& retarded,const Field& advanced,const Field& keldysh,size_t i,double dx);
 double integrate_current_over_quasienergy(const std::vector<double>& integrand,double width,const PhysicalParams&);
-CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams&,const NumericalParams&,const std::vector<PairField>* initial=nullptr,std::vector<PairField>* solutions=nullptr);
+CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams&,const NumericalParams&,const std::vector<PairField>* initial=nullptr,std::vector<PairField>* solutions=nullptr, const EnergyCache* energy_initial=nullptr, EnergyCache* energy_solutions=nullptr);
 std::vector<CurrentResult> compute_IV_curve(const std::vector<double>& voltages,const PhysicalParams&,const NumericalParams&);
 std::vector<ConvergenceResult> check_current_convergence(double voltage,const PhysicalParams&,const NumericalParams&,double tolerance=1e-3);
 unsigned energy_worker_count(const NumericalParams&);

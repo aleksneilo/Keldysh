@@ -74,4 +74,5 @@
     <None Include="sns\VALIDATION.md"><Filter>SNS Floquet</Filter></None>
   </ItemGroup>
   <ItemGroup><ClCompile Include="sns\runner.cpp"><Filter>SNS Floquet</Filter></ClCompile><ClInclude Include="sns\runner.hpp"><Filter>SNS Floquet</Filter></ClInclude></ItemGroup>
+  <ItemGroup><ClCompile Include="sns\energy_integration.cpp" /><ClInclude Include="sns\energy_integration.hpp" /></ItemGroup>
 </Project>

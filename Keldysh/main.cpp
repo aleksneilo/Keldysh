@@ -56,26 +56,67 @@ int main(int argc, char** argv)
     settings.physical.Delta = 1.76;
     settings.physical.T = 0.0;
     settings.physical.Ksi_N = 1.0;
-    settings.physical.L_N = 1.0;// *std::sqrt(settings.physical.diffusion() / settings.physical.Delta); // L/xi_Delta=1
+    settings.physical.L_N = 1.0;
     settings.physical.ro_N = 1.0;
     settings.physical.area = 1.0;
     settings.physical.Xi = 0.0;
 
+    // Main numerical grid
     settings.numerical.NF = 4;
     settings.numerical.Nx = 49;
     settings.numerical.Neps = 512;
-    settings.numerical.energy_threads = 0; // All logical processors minus one; 1 disables parallelism.
-    settings.numerical.eta = 0.001 * settings.physical.Delta;
-    settings.numerical.use_anderson = true; // false restores ordinary Picard.
+
+    // Adaptive energy integration
+    settings.numerical.adaptive_energy = true;
+    settings.numerical.energy_threads = 31;
+    settings.numerical.energy_base_intervals = 32;
+    settings.numerical.energy_integration_tolerance = 1e-3;
+
+    settings.numerical.energy_gap_width =
+        0.05 * settings.physical.Delta;
+
+    settings.numerical.energy_refinement_factor = 2.0;
+    settings.numerical.energy_max_refinement = 12;
+    settings.numerical.energy_min_step = 1e-7;
+    settings.numerical.gap_edge_avoidance = 1e-9;
+
+    // Recovery near difficult energies
+    settings.numerical.energy_recovery_steps = 6;
+    settings.numerical.energy_recovery_attempts = 24;
+
+    // Interpolation
+    settings.numerical.energy_allow_interpolation = true;
+
+    settings.numerical.energy_interpolation_max_width =
+        0.001 * settings.physical.Delta;
+
+    settings.numerical.energy_interpolation_max_variation = 0.05;
+
+    // Spectral broadening
+    settings.numerical.eta =
+        0.001 * settings.physical.Delta;
+
+    // Anderson acceleration
+    settings.numerical.use_anderson = true;
     settings.numerical.anderson_depth = 6;
     settings.numerical.anderson_start = 2;
     settings.numerical.anderson_regularization = 1e-10;
     settings.numerical.anderson_coefficient_limit = 20.0;
-    settings.numerical.anderson_verbose = false;
+
     settings.numerical.mixing = 0.8;
     settings.numerical.tolerance = 1e-6;
     settings.numerical.residual_tolerance = 1e-6;
     settings.numerical.max_iterations = 4000;
+    
+    // Gap-edge optimization
+    settings.numerical.energy_use_anchors = true;
+    settings.numerical.energy_gap_skip_width = 1.0 * settings.numerical.eta; //-1; // automatic 5*eta
+
+    // Diagnostics
+    settings.numerical.energy_verbose = false;
+    settings.numerical.spectral_verbose = false;
+    settings.numerical.anderson_verbose = false;
+    settings.numerical.iteration_log_path = "";
     // Write G^R_nm(x) and F^R_nm(x) after EVERY accepted gamma iteration.
     // Use an empty string to disable the output.
     //settings.numerical.iteration_log_path =        "C:/Users/user/source/repos/aleksneilo/keldysh/Ricatti/GF_iterations.txt";
@@ -95,6 +136,12 @@ int main(int argc, char** argv)
     settings.conductance_path = "C:/Users/user/source/repos/aleksneilo/keldysh/Ricatti/conductance_L1.txt";
     settings.epsilon = 3.0 * settings.physical.Delta;
     //settings.voltage = 0.0; // Set e.g. 2*Delta for a finite-voltage calculation.
+    settings.numerical.energy_use_anchors = true;
+    //settings.numerical.energy_gap_skip_width = -1; // Automatic 5*eta, including CLI eta overrides.
+    settings.numerical.spectral_verbose = false;
+    settings.numerical.energy_verbose = false;
+    settings.numerical.anderson_verbose = false;
+    settings.numerical.iteration_log_path = "";
     return sns::run_cli(argc, argv, settings);
 }
 

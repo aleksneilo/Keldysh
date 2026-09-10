@@ -9,6 +9,7 @@
 #include <mutex>
 
 namespace sns {
+static std::mutex spectral_log_mutex, anderson_output_mutex;
 void validate(const PhysicalParams& p,const NumericalParams& n,double v) {
     for(double q:{p.Delta,p.T,p.Ksi_N,p.L_N,p.ro_N,p.area,p.Xi,v,n.eta,n.mixing,n.tolerance,n.residual_tolerance,n.kinetic_tolerance})
         if(!std::isfinite(q)) throw std::invalid_argument("parameters must be finite");
@@ -286,6 +287,7 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
     set_boundaries(s.amplitudes,b);
     std::ofstream iteration_output;
     if (!n.iteration_log_path.empty()) {
+        std::lock_guard<std::mutex> log_lock(spectral_log_mutex);
         iteration_output.exceptions(std::ios::failbit | std::ios::badbit);
         iteration_output.open(n.iteration_log_path, std::ios::app);
         iteration_output << std::setprecision(17)
@@ -294,6 +296,7 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
             << " D=" << p.diffusion() << " L_N=" << p.L_N
             << " Xi=" << p.Xi << " eta=" << n.eta << '\n'
             << "# iteration lambda epsilon v x n m ReG ImG ReF ImF change residual\n";
+        iteration_output.flush();
     }
     int stages=initial?1:n.continuation_steps;
     for(int stage=1;stage<=stages;++stage) {
@@ -350,33 +353,35 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
                 << ", mixing = " << mix
                 << std::endl; //*/
             
-            if(n.anderson_verbose)
+            if(n.anderson_verbose) {
+                std::lock_guard<std::mutex> output_lock(anderson_output_mutex);
                 std::cerr<<std::setprecision(12)<<"AA epsilon="<<eps<<" stage="<<stage
                          <<" iteration="<<iter<<" lambda="<<lambda<<" residual="<<r
                          <<" change="<<change<<" mix="<<mix<<" used="<<aa_used
                          <<" history="<<anderson_history.size()<<" failure="<<aa_failure<<'\n';
+            }
             mix=std::min(n.mixing,mix*1.1);
-            if (iteration_output.is_open())
+            if (iteration_output.is_open()) {
+                std::lock_guard<std::mutex> log_lock(spectral_log_mutex);
                 write_GF_iteration(iteration_output, s, p, eps, v, lambda);
+            }
             if(change<n.tolerance && r<n.residual_tolerance) { converged=true;break; }
         }
         if(!converged) { std::ostringstream msg;msg<<"spectral iteration limit: eps/Delta="<<eps/(p.Delta?p.Delta:1)<<", residual="<<s.residual;throw std::runtime_error(msg.str()); }
     }
-    {
-    static std::mutex final_output_mutex;
-    std::lock_guard<std::mutex> output_lock(final_output_mutex);
-    /*/std::cout
-        << "FINAL: "
-        << "eps = " << eps
-        << ", iterations = " << s.iterations
-        << ", change = " << s.change
-        << ", residual = " << s.residual
-        << ", residual_tolerance = " << n.residual_tolerance
-        << std::endl;/*/
+    if(n.spectral_verbose) {
+        static std::mutex final_output_mutex;
+        std::lock_guard<std::mutex> output_lock(final_output_mutex);
+        std::cout<<"FINAL: eps="<<eps<<", iterations="<<s.iterations
+                 <<", change="<<s.change<<", residual="<<s.residual
+                 <<", residual_tolerance="<<n.residual_tolerance<<'\n';
     }
-    if (iteration_output.is_open())
+    if (iteration_output.is_open()) {
+        std::lock_guard<std::mutex> log_lock(spectral_log_mutex);
         iteration_output << "# END converged: iterations=" << s.iterations
-            << " residual=" << s.residual << "\n\n";
+            << " residual=" << s.residual<<" epsilon="<<eps<<" v="<<v<<"\n\n";
+        iteration_output.flush();
+    }
     return s;
 }
 void solve_gamma_for_voltage(double v,const PhysicalParams& p,const NumericalParams& n,const std::function<void(double,const SpectralSolution&)>& consume) {

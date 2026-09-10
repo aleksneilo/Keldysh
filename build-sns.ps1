@@ -15,7 +15,7 @@ try {
     $destination = (Resolve-Path -LiteralPath $BuildDirectory).Path
     $compiler = Join-Path $msvc.FullName 'bin\Hostx64\x64\cl.exe'
     $source = Join-Path $PSScriptRoot 'Keldysh\sns'
-    $common = @('/nologo','/std:c++17','/EHsc','/O2','/W4','/utf-8',"/Fo$destination\",(Join-Path $source 'spectral.cpp'),(Join-Path $source 'kinetic.cpp'),(Join-Path $source 'current.cpp'),(Join-Path $source 'runner.cpp'))
+    $common = @('/nologo','/std:c++17','/EHsc','/O2','/W4','/utf-8',"/Fo$destination\",(Join-Path $source 'spectral.cpp'),(Join-Path $source 'kinetic.cpp'),(Join-Path $source 'current.cpp'),(Join-Path $source 'energy_integration.cpp'),(Join-Path $source 'runner.cpp'))
     & $compiler @common (Join-Path $source 'tests.cpp') "/Fe$destination\sns_tests.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
     & $compiler @common (Join-Path $source 'cli.cpp') "/Fe$destination\sns_cli.exe"
@@ -24,6 +24,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Anderson safeguard build failed' }
     & (Join-Path $destination 'sns_anderson_safeguard_tests.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Anderson safeguard tests failed' }
+    & $compiler @common (Join-Path $source 'adaptive_energy_tests.cpp') "/Fe$destination\sns_adaptive_tests.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Adaptive test build failed' }
+    & (Join-Path $destination 'sns_adaptive_tests.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Adaptive tests failed' }
+    & (Join-Path $destination 'sns_adaptive_tests.exe') physical
+    if ($LASTEXITCODE -ne 0) { throw 'Adaptive physical tests failed' }
+    & $compiler @common (Join-Path $source 'energy_optimization_tests.cpp') "/Fe$destination\sns_energy_optimization_tests.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Energy optimization test build failed' }
+    & (Join-Path $destination 'sns_energy_optimization_tests.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Energy optimization tests failed' }
     & (Join-Path $destination 'sns_tests.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
 } finally { $env:INCLUDE = $oldInclude; $env:LIB = $oldLib }

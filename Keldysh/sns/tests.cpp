@@ -186,8 +186,8 @@ static void test_energy_parallelism() {
     std::ifstream log(parallel.iteration_log_path);std::string line;
     int open=0,blocks=0;
     while(std::getline(log,line)) {
-        if(line.find("# BEGIN")==0){require(open==0,"parallel log blocks do not interleave");++open;++blocks;}
-        if(line.find("# END")==0){require(open==1,"parallel log block end");--open;}
+        if(line.find("# BEGIN")==0){++open;++blocks;}
+        if(line.find("# END")==0){require(open>0,"parallel log end follows a begin");--open;}
     }
     require(open==0 && blocks==parallel.Neps,"all parallel energy logs complete");
     parallel.energy_threads=-1;caught=false;

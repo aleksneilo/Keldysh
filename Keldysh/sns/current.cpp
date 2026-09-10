@@ -1,4 +1,5 @@
 #include "sns.hpp"
+#include "energy_integration.hpp"
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -10,7 +11,7 @@ unsigned energy_worker_count(const NumericalParams& n) {
     if(n.energy_threads<0 || n.Neps<2)throw std::invalid_argument("invalid energy thread count/grid");
     unsigned hardware=std::thread::hardware_concurrency();
     unsigned requested=n.energy_threads?static_cast<unsigned>(n.energy_threads):(hardware>1?hardware-1:1);
-    return std::min(requested,static_cast<unsigned>(n.Neps));
+    return std::min(requested,static_cast<unsigned>(n.adaptive_energy?n.energy_base_intervals:n.Neps));
 }
 std::vector<double> voltage_grid(double start,double end,double step) {
     if(!std::isfinite(start)||!std::isfinite(end)||!std::isfinite(step)||step<=0||start<=0||end<=0)
@@ -53,10 +54,24 @@ double integrate_current_over_quasienergy(const std::vector<double>& values,doub
     // the +x matrix-current trace has the opposite sign (see normal-state test).
     return -(p.area/p.ro_N)*sum*width/(values.size()*8*pi*pi);
 }
-CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams& p,const NumericalParams& n,const std::vector<PairField>* initial,std::vector<PairField>* solutions) {
+CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams& p,const NumericalParams& n,const std::vector<PairField>* initial,std::vector<PairField>* solutions,const EnergyCache* energy_initial,EnergyCache* energy_solutions) {
     validate(p,n,voltage);
     if(voltage==0) throw std::invalid_argument("V=0 is a stationary spectral BVP; dc voltage-state integral has zero-width zone. Use solve_gamma_for_energy.");
     if(voltage<0 && p.Xi!=0) throw std::invalid_argument("negative-voltage symmetry requires zero initial phase");
+    if(n.adaptive_energy) {
+        EnergyCache local;
+        auto result=solve_current_adaptive(voltage,p,n,energy_initial,
+                                          energy_solutions?energy_solutions:(solutions?&local:nullptr));
+        if(solutions) {
+            const auto& cache=energy_solutions?*energy_solutions:local;
+            std::vector<PairField> fields;
+            for(const auto& entry:cache.entries)fields.push_back(entry.amplitudes);
+            *solutions=std::move(fields);
+        }
+        // A bare initial vector has no energy coordinates on an adaptive grid.
+        // Its replacement is energy_initial; legacy midpoint calls remain unchanged.
+        return result;
+    }
     const unsigned workers=energy_worker_count(n);
     double v=std::abs(voltage);
     std::vector<std::vector<double>> integrands(3,std::vector<double>(n.Neps));
@@ -67,14 +82,14 @@ CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams& p,c
     std::vector<PairField> computed(solutions?size_t(n.Neps):0);
     std::vector<std::exception_ptr> errors(workers);
     std::atomic<bool> stop{false};
-    static std::mutex diagnostic_mutex;
+
     if(workers>1) {
         long double k=2.L*n.NF+1,block=2*k*k;
         long double mib=workers*(n.Nx-2)*block*block*sizeof(Complex)*6/(1024*1024);
         std::cerr<<"Energy integration: workers="<<workers<<" Neps="<<n.Neps
                  <<" kinetic workspace estimate MiB="<<static_cast<double>(mib)<<'\n';
         if(!n.iteration_log_path.empty() || n.anderson_verbose)
-            std::cerr<<"Spectral diagnostic output enabled: spectral solves are serialized; kinetic solves remain parallel.\n";
+            std::cerr<<"Spectral diagnostic output enabled: only stream writes are locked.\n";
     }
     auto work=[&](unsigned worker) {
         try {
@@ -90,8 +105,8 @@ CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams& p,c
                 SpectralSolution s;
                 {
                     // Protect the existing stream-based G/F and iteration diagnostics.
-                    std::unique_lock<std::mutex> lock(diagnostic_mutex,std::defer_lock);
-                    if(!n.iteration_log_path.empty() || n.anderson_verbose)lock.lock();
+
+
                     try { s=solve_gamma_for_energy(eps,v,p,n,guess); }
                     catch(const std::runtime_error&) {
                         if(!guess)throw;
@@ -147,7 +162,16 @@ CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams& p,c
 }
 std::vector<CurrentResult> compute_IV_curve(const std::vector<double>& voltages,const PhysicalParams& p,const NumericalParams& n) {
     std::vector<CurrentResult> out;std::vector<PairField> previous,next;
-    for(double v:voltages) { out.push_back(solve_current_for_voltage(v,p,n,previous.empty()?nullptr:&previous,&next));previous=std::move(next); }return out;
+    EnergyCache energy_previous,energy_next;
+    for(double v:voltages) {
+        out.push_back(solve_current_for_voltage(v,p,n,
+            n.adaptive_energy?nullptr:(previous.empty()?nullptr:&previous),
+            n.adaptive_energy?nullptr:&next,
+            energy_previous.entries.empty()?nullptr:&energy_previous,
+            n.adaptive_energy?&energy_next:nullptr));
+        previous=std::move(next);energy_previous=std::move(energy_next);
+    }
+    return out;
 }
 /*/std::vector<ConvergenceResult> check_current_convergence(double v, const PhysicalParams& p, const NumericalParams& n, double tol) {
     double base=solve_current_for_voltage(v,p,n).current;std::vector<ConvergenceResult> out;
@@ -217,6 +241,29 @@ check_current_convergence(
     const NumericalParams& n,
     double tol)
 {
+    if(n.adaptive_energy) {
+        auto baseline=solve_current_for_voltage(v,p,n);
+        std::vector<ConvergenceResult> checks;
+        for(int test=0;test<2;++test) {
+            NumericalParams refined=n;
+            std::string name;
+            if(test==0) {
+                refined.energy_integration_tolerance*=.25;
+                name="energy tolerance / 4";
+            } else {
+                refined.energy_base_intervals*=2;
+                refined.energy_max_evaluations*=2;
+                name="2 * energy base intervals";
+            }
+            auto value=solve_current_for_voltage(v,p,refined);
+            double change=std::abs(value.current-baseline.current)/
+                std::max(std::abs(value.current),1e-12*p.conductance()*std::abs(v));
+            checks.push_back({name,baseline.current,value.current,change,
+                              change<std::min(tol,n.energy_integration_tolerance)});
+        }
+        return checks;
+    }
+
     std::vector<ConvergenceResult> out;
 
     // Значения Nx, которые хотим проверить

@@ -17,8 +17,8 @@ int sns::run_cli(int argc,char** argv,const RunSettings& settings) {
         double scale=p.Delta;
         if(mode=="help" || mode=="--help") { std::cout<<"SNS reference solver (legacy units: E0=k_B*Tc, length=xi_S; physical defaults are set by the entry point)\n"
             <<"Keldysh spectral [E/E0="<<settings.epsilon<<"] [eV/E0="<<settings.voltage<<"] [NF="<<n.NF<<"] [Nx="<<n.Nx<<"]\n"
-            <<"Keldysh iv|normal|convergence [eV/E0="<<settings.voltage<<"] [NF="<<n.NF<<"] [Nx="<<n.Nx<<"] [Neps="<<n.Neps<<"] [eta/E0="<<n.eta<<"]\n"
-            <<"Keldysh conductance [Vstart/Delta=3] [Vend/Delta=0.5] [step/Delta=0.1] [NF] [Nx] [Neps] [output.txt]\n"
+            <<"Keldysh iv|normal|convergence [eV/E0="<<settings.voltage<<"] [NF="<<n.NF<<"] [Nx="<<n.Nx<<"] [Neps="<<n.Neps<<"] [eta/E0="<<n.eta<<"] [adaptive|uniform]\n"
+            <<"Keldysh conductance [Vstart/Delta=3] [Vend/Delta=0.5] [step/Delta=0.1] [NF] [Nx] [Neps] [output.txt] [adaptive|uniform]\n"
             <<"Keldysh benchmark [NF="<<n.NF<<"] [Nx="<<n.Nx<<"] [Neps="<<n.Neps<<"]\n"
             <<"benchmark runs v/Delta=2,1,0.5 with the configured physical parameters.\n"
             <<"Keldysh --legacy runs the original calculation. No arguments uses main.cpp settings.\n"
@@ -46,6 +46,11 @@ int sns::run_cli(int argc,char** argv,const RunSettings& settings) {
             if(argc>7)n.Neps=std::stoi(argv[7]);
             std::string path=argc>8?argv[8]:settings.conductance_path;
             auto grid=sns::voltage_grid(start,end,step);
+            if(argc>9) {
+                std::string method=argv[9];
+                if(method!="uniform" && method!="adaptive")throw std::invalid_argument("energy method: adaptive|uniform");
+                n.adaptive_energy=method=="adaptive";
+            }
             sns::validate(p,n,grid.front()*scale);
             std::ofstream out(path,std::ios::trunc);
             if(!out)throw std::runtime_error("Cannot create conductance file: "+path);
@@ -55,6 +60,12 @@ int sns::run_cli(int argc,char** argv,const RunSettings& settings) {
                <<" Delta/E0="<<scale<<" T/Tc="<<p.T<<" Ksi_N="<<p.Ksi_N
                <<" ro_N="<<p.ro_N<<" area="<<p.area<<" Xi="<<p.Xi<<"\n"
                <<"# NF="<<n.NF<<" Nx="<<n.Nx<<" Neps="<<n.Neps<<" eta/Delta="<<n.eta/scale<<"\n"
+               <<"# adaptive_energy="<<n.adaptive_energy<<" base_intervals="<<n.energy_base_intervals
+               <<" integration_tolerance="<<n.energy_integration_tolerance
+               <<" gap_width="<<n.energy_gap_width<<" min_step="<<n.energy_min_step
+               <<" gap_avoidance="<<n.gap_edge_avoidance<<"\n"
+               <<"# energy_use_anchors="<<n.energy_use_anchors
+               <<" gap_skip_width="<<(n.energy_gap_skip_width<0?5*n.eta:n.energy_gap_skip_width)<<"\n"
                <<"# energy_workers="<<sns::energy_worker_count(n)<<"\n"
                <<"# use_anderson="<<n.use_anderson<<" depth="<<n.anderson_depth
                <<" start="<<n.anderson_start<<" regularization="<<n.anderson_regularization
@@ -65,11 +76,17 @@ int sns::run_cli(int argc,char** argv,const RunSettings& settings) {
             if(!out)throw std::runtime_error("Cannot write conductance header: "+path);
             std::vector<double> currents;
             std::vector<sns::PairField> previous,next;
+            sns::EnergyCache energy_previous,energy_next;
             bool conserved=true;
             size_t written=0;
             std::cerr<<"Conductance output: "<<path<<'\n';
             for(size_t i=0;i<grid.size();++i) {
-                auto r=sns::solve_current_for_voltage(grid[i]*scale,p,n,previous.empty()?nullptr:&previous,&next);
+                auto r=sns::solve_current_for_voltage(grid[i]*scale,p,n,
+                    n.adaptive_energy?nullptr:(previous.empty()?nullptr:&previous),
+                    n.adaptive_energy?nullptr:&next,
+                    energy_previous.entries.empty()?nullptr:&energy_previous,
+                    n.adaptive_energy?&energy_next:nullptr);
+                energy_previous=std::move(energy_next);
                 previous=std::move(next);
                 currents.push_back(r.current/(p.conductance()*scale));
                 conserved=conserved && r.conservation_error<1e-3;
@@ -106,6 +123,11 @@ int sns::run_cli(int argc,char** argv,const RunSettings& settings) {
         
         
         if(argc>3)n.NF=std::stoi(argv[3]);if(argc>4)n.Nx=std::stoi(argv[4]);if(argc>5)n.Neps=std::stoi(argv[5]);if(argc>6)n.eta=std::stod(argv[6]);
+        if(argc>7) {
+            std::string method=argv[7];
+            if(method!="uniform" && method!="adaptive")throw std::invalid_argument("energy method: adaptive|uniform");
+            n.adaptive_energy=method=="adaptive";
+        }
         if(mode=="normal")p.Delta=0;
         if(mode=="convergence") { auto checks=sns::check_current_convergence(v,p,n);std::cout<<"parameter,baseline_Istar,refined_Istar,relative_change,passed\n";bool passed=true;for(auto c:checks){std::cout<<c.parameter<<','<<c.baseline<<','<<c.refined<<','<<c.relative_change<<','<<c.passed<<'\n';passed=passed&&c.passed;}return passed?0:2; }
         auto r=sns::solve_current_for_voltage(v,p,n);
