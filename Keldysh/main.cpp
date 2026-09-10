@@ -61,9 +61,9 @@ int main(int argc, char** argv)
     settings.physical.area = 1.0;
     settings.physical.Xi = 0.0;
 
-    settings.numerical.NF = 2;
+    settings.numerical.NF = 4;
     settings.numerical.Nx = 25;
-    settings.numerical.Neps = 512;
+    settings.numerical.Neps = 16;
     settings.numerical.eta = 0.001 * settings.physical.Delta;
     settings.numerical.mixing = 0.15;
     settings.numerical.tolerance = 1e-8;

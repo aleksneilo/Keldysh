@@ -211,7 +211,7 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
                 << ", residual = " << r
                 << ", residual_tolerance = " << n.residual_tolerance
                 << ", mixing = " << mix
-                << std::endl; /*/
+                << std::endl; //*/
             
             mix=std::min(n.mixing,mix*1.1);
             if (iteration_output.is_open())
