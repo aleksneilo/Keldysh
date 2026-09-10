@@ -55,6 +55,9 @@ int sns::run_cli(int argc,char** argv,const RunSettings& settings) {
                <<" Delta/E0="<<scale<<" T/Tc="<<p.T<<" Ksi_N="<<p.Ksi_N
                <<" ro_N="<<p.ro_N<<" area="<<p.area<<" Xi="<<p.Xi<<"\n"
                <<"# NF="<<n.NF<<" Nx="<<n.Nx<<" Neps="<<n.Neps<<" eta/Delta="<<n.eta/scale<<"\n"
+               <<"# use_anderson="<<n.use_anderson<<" depth="<<n.anderson_depth
+               <<" start="<<n.anderson_start<<" regularization="<<n.anderson_regularization
+               <<" coefficient_limit="<<n.anderson_coefficient_limit<<" mixing="<<n.mixing<<"\n"
                <<"# Central differences; second-order one-sided endpoints. Check grid convergence.\n"
                <<"# V\tL_N\tI\tdI/dV\n";
             out.flush();

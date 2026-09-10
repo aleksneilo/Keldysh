@@ -4,11 +4,16 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iostream>
 
 namespace sns {
 void validate(const PhysicalParams& p,const NumericalParams& n,double v) {
     for(double q:{p.Delta,p.T,p.Ksi_N,p.L_N,p.ro_N,p.area,p.Xi,v,n.eta,n.mixing,n.tolerance,n.residual_tolerance,n.kinetic_tolerance})
         if(!std::isfinite(q)) throw std::invalid_argument("parameters must be finite");
+    if(n.anderson_depth<1 || n.anderson_depth>1000 || n.anderson_start<0 ||
+       !std::isfinite(n.anderson_regularization) || n.anderson_regularization<0 ||
+       !std::isfinite(n.anderson_coefficient_limit) || n.anderson_coefficient_limit<=0)
+        throw std::invalid_argument("invalid Anderson parameters");
     if(p.Delta<0 || p.T<0 || p.Ksi_N<=0 || p.L_N<=0 || p.ro_N<=0 || p.area<=0 || n.eta<=0 || n.NF<0 || n.NF>1000 || n.Nx<5 || n.Neps<2 || n.max_iterations<1 || n.continuation_steps<1 || n.mixing<=0 || n.mixing>1 || n.tolerance<=0 || n.residual_tolerance<=0 || n.kinetic_tolerance<=0)
         throw std::invalid_argument("invalid physical/numerical parameter");
 }
@@ -165,6 +170,111 @@ static void write_GF_iteration(std::ostream& out, const SpectralSolution& s,
     out.flush();
 }
 
+static size_t interior_size(const PairField& f) {
+    if(f.gamma.size()<3 || f.gamma.size()!=f.tilde.size())
+        throw std::invalid_argument("Anderson field spatial size");
+    size_t count=0;
+    for(size_t i=1;i+1<f.gamma.size();++i) {
+        same_shape(f.gamma[i],f.tilde[i]);
+        same_shape(f.gamma[i],f.gamma.front());
+        if(f.gamma[i].data.size()!=Matrix::checked_size(f.gamma[i].rows,f.gamma[i].cols) ||
+           f.tilde[i].data.size()!=f.gamma[i].data.size())
+            throw std::invalid_argument("Anderson matrix storage size");
+        count+=2*f.gamma[i].data.size();
+    }
+    return count;
+}
+static std::vector<Complex> flatten_interior(const PairField& f) {
+    std::vector<Complex> out;out.reserve(interior_size(f));
+    for(size_t i=1;i+1<f.gamma.size();++i)
+        for(const auto* a:{&f.gamma[i],&f.tilde[i]})
+            out.insert(out.end(),a->data.begin(),a->data.end());
+    return out;
+}
+static void set_interior_from_vector(PairField& f,const std::vector<Complex>& v) {
+    if(v.size()!=interior_size(f))throw std::invalid_argument("Anderson vector size");
+    size_t offset=0;
+    for(size_t i=1;i+1<f.gamma.size();++i)
+        for(auto* a:{&f.gamma[i],&f.tilde[i]}) {
+            std::copy_n(v.begin()+offset,a->data.size(),a->data.begin());
+            offset+=a->data.size();
+        }
+}
+struct AndersonEntry { std::vector<Complex> x,image,residual; };
+static double real_inner(const std::vector<Complex>& a,const std::vector<Complex>& b) {
+    if(a.size()!=b.size())throw std::invalid_argument("Anderson inner product size");
+    double sum=0;
+    for(size_t i=0;i<a.size();++i)sum+=(std::conj(a[i])*b[i]).real();
+    return sum;
+}
+// A rejected combination leaves target unchanged.
+static const char* anderson_target(const std::vector<AndersonEntry>& history,
+                                  const NumericalParams& n,PairField& target) {
+    int count=static_cast<int>(history.size());
+    Matrix h(count+1,count+1),rhs(count+1,1);
+    double scale=0;
+    for(int i=0;i<count;++i) {
+        double diagonal=real_inner(history[i].residual,history[i].residual);
+        if(!std::isfinite(diagonal))return "nonfinite";
+        scale=std::max(scale,diagonal);
+    }
+    if(!(scale>0))return "zero-residual";
+    for(int i=0;i<count;++i) {
+        for(int j=0;j<=i;++j)
+            h(i,j)=h(j,i)=real_inner(history[i].residual,history[j].residual)/scale;
+        h(i,i)+=n.anderson_regularization;
+        h(i,count)=h(count,i)=1.;
+    }
+    rhs(count,0)=1.;
+    Matrix solution;
+    try { solution=solve_dense(h,rhs); }
+    catch(const std::runtime_error&) {return "singular";}
+    double sum=0,l1=0;
+    for(int i=0;i<count;++i)sum+=solution(i,0).real();
+    if(!std::isfinite(sum)||std::abs(sum)<1e-12)return "coefficients";
+    std::vector<double> alpha(count);
+    for(int i=0;i<count;++i) {
+        alpha[i]=solution(i,0).real()/sum;
+        if(!std::isfinite(alpha[i]))return "coefficients";
+        l1+=std::abs(alpha[i]);
+    }
+    if(l1>n.anderson_coefficient_limit)return "coefficient-limit";
+    std::vector<Complex> combined(history.back().image.size());
+    for(int j=0;j<count;++j)
+        for(size_t i=0;i<combined.size();++i)combined[i]+=alpha[j]*history[j].image[i];
+    for(auto z:combined)if(!std::isfinite(z.real())||!std::isfinite(z.imag()))return "nonfinite";
+    set_interior_from_vector(target,combined);
+    return nullptr;
+}
+// The fallback retries from the SAME current field and restores the incoming mixing.
+// This helper also allows a deliberately invalid AA target to exercise the safeguard.
+static bool safeguarded_mixed_step(const PairField& current,const PairField& raw_target,
+    const PairField& accelerated_target,bool accelerated,const Matrix& e,
+    const PhysicalParams& p,const NumericalParams& n,double lambda,double old,
+    double& mix,PairField& next,double& change,double& r,bool& fallback) {
+    const double saved_mix=mix;
+    fallback=false;
+    for(int attempt=0;attempt<(accelerated?2:1);++attempt) {
+        const PairField& target=(accelerated && attempt==0)?accelerated_target:raw_target;
+        if(attempt) { mix=saved_mix; next=current; fallback=true; }
+        bool accepted=false;
+        for(int trial=0;trial<18;++trial) {
+            change=0;
+            for(int i=1;i<n.Nx-1;++i) for(int side=0;side<2;++side) {
+                const Matrix& a=side?current.tilde[i]:current.gamma[i];
+                const Matrix& t=side?target.tilde[i]:target.gamma[i];
+                Matrix& out=side?next.tilde[i]:next.gamma[i];
+                out=(1-mix)*a+mix*t;change=std::max(change,norm(out-a)/(1+norm(out)));
+            }
+            try { r=equation_residual(next,e,p,n,lambda); }
+            catch(const std::runtime_error&) { r=std::numeric_limits<double>::infinity(); }
+            if(std::isfinite(r) && (r<=old*1.02 || r<n.residual_tolerance)) { accepted=true;break; }
+            mix*=0.5;
+        }
+        if(accepted && mix>=1e-10)return true;
+    }
+    return false;
+}
 SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams& p,const NumericalParams& n,const PairField* initial) {
     validate(p,n,v); Matrix e=make_energy_matrix(eps,v,n.NF,p); auto b=build_gamma_boundaries(e,v,p,n.eta);
     SpectralSolution s; s.amplitudes=initial?*initial:initial_gamma_linearized(e,b,p,n);
@@ -184,22 +294,46 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
     }
     int stages=initial?1:n.continuation_steps;
     for(int stage=1;stage<=stages;++stage) {
+        std::vector<AndersonEntry> anderson_history; // New fixed-point problem at each lambda.
+        int anderson_failures=0;
         double lambda=initial?1.:double(stage)/stages,mix=n.mixing; bool converged=false;
         double old=equation_residual(s.amplitudes,e,p,n,lambda);
         for(int iter=0;iter<n.max_iterations;++iter) {
-            auto target=gamma_picard_step(s.amplitudes,e,b,p,n,lambda); PairField next=s.amplitudes;
-            double change=0,r=0; bool accepted=false;
-            for(int trial=0;trial<18;++trial) {
-                change=0;
-                for(int i=1;i<n.Nx-1;++i) for(int side=0;side<2;++side) {
-                    const Matrix& a=side?s.amplitudes.tilde[i]:s.amplitudes.gamma[i];
-                    const Matrix& t=side?target.tilde[i]:target.gamma[i]; Matrix& out=side?next.tilde[i]:next.gamma[i];
-                    out=(1-mix)*a+mix*t; change=std::max(change,norm(out-a)/(1+norm(out)));
+            auto raw_target=gamma_picard_step(s.amplitudes,e,b,p,n,lambda);
+            PairField target=raw_target, next=s.amplitudes;
+            bool aa_used=false;
+            const char* aa_failure="none";
+            if(n.use_anderson) {
+                AndersonEntry entry;
+                entry.x=flatten_interior(s.amplitudes);
+                entry.image=flatten_interior(raw_target);
+                entry.residual=entry.image;
+                for(size_t j=0;j<entry.x.size();++j)entry.residual[j]-=entry.x[j];
+                anderson_history.push_back(std::move(entry));
+                if(anderson_history.size()>size_t(n.anderson_depth)+1)
+                    anderson_history.erase(anderson_history.begin());
+                if(iter>=n.anderson_start && anderson_history.size()>=2) {
+                    const char* failure=anderson_target(anderson_history,n,target);
+                    aa_used=!failure;
+                    if(failure) {
+                        aa_failure=failure;
+                        anderson_history.clear();
+                        anderson_failures=0;
+                    }
                 }
-                try { r=equation_residual(next,e,p,n,lambda); } catch(const std::runtime_error&) { r=std::numeric_limits<double>::infinity(); }
-                if(std::isfinite(r) && (r<=old*1.02 || r<n.residual_tolerance)) { accepted=true;break; }
-                mix*=0.5;
             }
+            double change=0,r=0;
+            bool fallback=false;
+            bool accepted=safeguarded_mixed_step(s.amplitudes,raw_target,target,aa_used,e,p,n,
+                                                lambda,old,mix,next,change,r,fallback);
+            if(fallback)aa_failure="residual-fallback";
+            if(aa_used && std::string(aa_failure)=="residual-fallback") {
+                aa_used=false;
+                if(++anderson_failures>=2) {
+                    anderson_history.clear();
+                    anderson_failures=0;
+                }
+            } else if(aa_used)anderson_failures=0;
             if(!accepted || mix<1e-10) throw std::runtime_error("Picard stalled; increase broadening/grid/continuation or use Newton");
             s.amplitudes=std::move(next);s.change=change;s.residual=r;++s.iterations;old=r;
             
@@ -213,6 +347,11 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
                 << ", mixing = " << mix
                 << std::endl; //*/
             
+            if(n.anderson_verbose)
+                std::cerr<<std::setprecision(12)<<"AA epsilon="<<eps<<" stage="<<stage
+                         <<" iteration="<<iter<<" lambda="<<lambda<<" residual="<<r
+                         <<" change="<<change<<" mix="<<mix<<" used="<<aa_used
+                         <<" history="<<anderson_history.size()<<" failure="<<aa_failure<<'\n';
             mix=std::min(n.mixing,mix*1.1);
             if (iteration_output.is_open())
                 write_GF_iteration(iteration_output, s, p, eps, v, lambda);
@@ -220,6 +359,14 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
         }
         if(!converged) { std::ostringstream msg;msg<<"spectral iteration limit: eps/Delta="<<eps/(p.Delta?p.Delta:1)<<", residual="<<s.residual;throw std::runtime_error(msg.str()); }
     }
+    std::cout
+        << "FINAL: "
+        << "eps = " << eps
+        << ", iterations = " << s.iterations
+        << ", change = " << s.change
+        << ", residual = " << s.residual
+        << ", residual_tolerance = " << n.residual_tolerance
+        << std::endl;
     if (iteration_output.is_open())
         iteration_output << "# END converged: iterations=" << s.iterations
             << " residual=" << s.residual << "\n\n";

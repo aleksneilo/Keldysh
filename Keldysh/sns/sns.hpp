@@ -18,9 +18,12 @@ struct PhysicalParams {
 struct NumericalParams {
     int NF=2, Nx=25, Neps=16, max_iterations=4000;
     double eta=0.00176, mixing=0.15, tolerance=1e-8;
-    double residual_tolerance=1e-7, kinetic_tolerance=1e-8;
+    double residual_tolerance=1e-6, kinetic_tolerance=1e-6;
     int continuation_steps=4;
-    size_t max_block_bytes=512ULL*1024*1024;
+    bool use_anderson=false, anderson_verbose=false;
+    int anderson_depth=4, anderson_start=2;
+    double anderson_regularization=1e-10, anderson_coefficient_limit=20.0;
+    size_t max_block_bytes=1024ULL*1024*1024;
     // Empty disables output. The solver appends; run_cli clears once per run.
     std::string iteration_log_path;
 };

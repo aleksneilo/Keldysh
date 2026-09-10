@@ -55,8 +55,90 @@ static void test_GF_iteration_output(double voltage) {
     while(std::getline(appended,line))if(line.find("# BEGIN")==0)++begins;
     require(begins==2,"subsequent spectral solve appends instead of overwriting");
 }
+struct CaptureAndersonLog {
+    std::ostringstream text;
+    std::streambuf* previous;
+    CaptureAndersonLog():previous(std::cerr.rdbuf(text.rdbuf())){}
+    ~CaptureAndersonLog(){std::cerr.rdbuf(previous);}
+};
+static void compare_spectral(const sns::SpectralSolution& a,const sns::SpectralSolution& b) {
+    using namespace sns;
+    double fields=0,greens=0;
+    for(size_t i=0;i<a.amplitudes.gamma.size();++i) {
+        fields=std::max(fields,norm(a.amplitudes.gamma[i]-b.amplitudes.gamma[i]));
+        fields=std::max(fields,norm(a.amplitudes.tilde[i]-b.amplitudes.tilde[i]));
+        auto ga=compute_retarded_green_functions(a.amplitudes.gamma[i],a.amplitudes.tilde[i]);
+        auto gb=compute_retarded_green_functions(b.amplitudes.gamma[i],b.amplitudes.tilde[i]);
+        greens=std::max(greens,norm(ga.R-gb.R)/(1+norm(ga.R)));
+    }
+    require(fields<3e-6 && greens<3e-6,"Anderson and Picard same paired amplitudes and GR");
+    std::cout<<" differences fields="<<fields<<" relative_GR="<<greens<<'\n';
+}
+static void test_anderson() {
+    using namespace sns;
+    PhysicalParams p;p.L_N=std::sqrt(p.diffusion()/p.Delta);
+    NumericalParams n;n.NF=2;n.Nx=25;
+    NumericalParams aa=n;aa.use_anderson=true;aa.anderson_verbose=true;
+    const double v=2*p.Delta;
+    std::cout<<"Anderson comparison: epsilon/Delta Picard_iterations AA_iterations Picard_residual AA_residual\n";
+    for(double u:{.01,.95,1.,1.05,2.3,3.8}) {
+        auto plain=solve_gamma_for_energy(u*p.Delta,v,p,n);
+        CaptureAndersonLog log;
+        auto fast=solve_gamma_for_energy(u*p.Delta,v,p,aa);
+        require(plain.residual<n.residual_tolerance && fast.residual<aa.residual_tolerance,"Anderson physical residual");
+        std::cout<<u<<' '<<plain.iterations<<' '<<fast.iterations<<' '<<plain.residual<<' '<<fast.residual;
+        compare_spectral(plain,fast);
+        for(int stage=1;stage<=4;++stage) {
+            std::string marker="stage="+std::to_string(stage)+" iteration=0 ";
+            auto pos=log.text.str().find(marker);
+            require(pos!=std::string::npos,"continuation stage logged");
+            auto line=log.text.str().substr(pos,log.text.str().find('\n',pos)-pos);
+            require(line.find("used=0 history=1")!=std::string::npos,"Anderson history reset per stage");
+        }
+        auto seeded=solve_gamma_for_energy((u+.001)*p.Delta,v,p,n,&plain.amplitudes);
+        CaptureAndersonLog seedLog;
+        auto seedFast=solve_gamma_for_energy((u+.001)*p.Delta,v,p,aa,&plain.amplitudes);
+        compare_spectral(seeded,seedFast);
+        require(seedLog.text.str().find("lambda=1 ")!=std::string::npos &&
+                seedLog.text.str().find("stage=2 ")==std::string::npos,"initial guess uses one lambda=1 stage");
+    }
+    aa.anderson_verbose=false;
+    auto plainI=solve_current_for_voltage(v,p,n);
+    auto fastI=solve_current_for_voltage(v,p,aa);
+    double error=std::abs(fastI.current-plainI.current)/(p.conductance()*p.Delta);
+    std::cout<<"Anderson normalized current difference="<<error<<'\n';
+    require(error<1e-6,"Anderson preserves current with epsilon continuation");
+    // Reject every KKT combination deterministically: sum|alpha| >= |sum alpha| = 1.
+    aa.anderson_depth=8;aa.mixing=.5;aa.anderson_coefficient_limit=.5;aa.anderson_verbose=true;
+    NumericalParams plain=aa;plain.use_anderson=false;plain.anderson_verbose=false;
+    auto expected=solve_gamma_for_energy(.95*p.Delta,v,p,plain);
+    CaptureAndersonLog log;
+    auto rejected=solve_gamma_for_energy(.95*p.Delta,v,p,aa);
+    require(log.text.str().find("failure=coefficient-limit")!=std::string::npos,"Anderson coefficient rejection tested");
+    require(expected.iterations==rejected.iterations,"rejected Anderson reproduces Picard iterations");
+    compare_spectral(expected,rejected);
+    aa.anderson_coefficient_limit=20;
+    auto aggressive=solve_gamma_for_energy(.95*p.Delta,v,p,aa);
+    compare_spectral(expected,aggressive);
+    std::cout<<"Aggressive mixing=0.5 iterations Picard="<<expected.iterations<<" AA="<<aggressive.iterations
+             <<" residual_fallback_seen="<<(log.text.str().find("failure=residual-fallback")!=std::string::npos)<<'\n';
+    aa.mixing=.3;plain=aa;plain.use_anderson=false;plain.anderson_verbose=false;
+    auto midPlain=solve_gamma_for_energy(.95*p.Delta,v,p,plain);
+    auto midAA=solve_gamma_for_energy(.95*p.Delta,v,p,aa);
+    compare_spectral(midPlain,midAA);
+    std::cout<<"Separate mixing=0.3 Picard="<<midPlain.iterations<<" AA="<<midAA.iterations<<'\n';
+    aa=n;aa.use_anderson=true;
+    auto zeroPlain=solve_gamma_for_energy(.37*p.Delta,0,p,n);
+    auto zeroAA=solve_gamma_for_energy(.37*p.Delta,0,p,aa);
+    compare_spectral(zeroPlain,zeroAA);
+    require(zeroAA.residual<n.residual_tolerance,"stationary Anderson residual");
+    NumericalParams bad=n;bad.anderson_depth=0;
+    bool invalid=false;try{validate(p,bad,v);}catch(const std::invalid_argument&){invalid=true;}
+    require(invalid,"invalid Anderson depth rejected");
+}
 int main() {
     try {
+        test_anderson();
         test_GF_iteration_output(0);
         test_GF_iteration_output(3.52);
         using namespace sns; PhysicalParams p; p.L_N=std::sqrt(p.diffusion()/p.Delta);NumericalParams n;n.Nx=17;n.Neps=8;n.NF=1;

@@ -20,6 +20,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
     & $compiler @common (Join-Path $source 'cli.cpp') "/Fe$destination\sns_cli.exe"
     if ($LASTEXITCODE -ne 0) { throw 'CLI build failed' }
+    & $compiler /nologo /std:c++17 /EHsc /O2 /W4 /utf-8 "/Fo$destination\" (Join-Path $source 'anderson_safeguard_tests.cpp') "/Fe$destination\sns_anderson_safeguard_tests.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Anderson safeguard build failed' }
+    & (Join-Path $destination 'sns_anderson_safeguard_tests.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Anderson safeguard tests failed' }
     & (Join-Path $destination 'sns_tests.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
 } finally { $env:INCLUDE = $oldInclude; $env:LIB = $oldLib }

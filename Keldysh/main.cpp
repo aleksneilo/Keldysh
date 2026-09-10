@@ -61,13 +61,19 @@ int main(int argc, char** argv)
     settings.physical.area = 1.0;
     settings.physical.Xi = 0.0;
 
-    settings.numerical.NF = 4;
+    settings.numerical.NF = 6;
     settings.numerical.Nx = 25;
     settings.numerical.Neps = 16;
     settings.numerical.eta = 0.001 * settings.physical.Delta;
-    settings.numerical.mixing = 0.15;
-    settings.numerical.tolerance = 1e-8;
-    settings.numerical.residual_tolerance = 1e-7;
+    settings.numerical.use_anderson = true; // false restores ordinary Picard.
+    settings.numerical.anderson_depth = 6;
+    settings.numerical.anderson_start = 2;
+    settings.numerical.anderson_regularization = 1e-10;
+    settings.numerical.anderson_coefficient_limit = 20.0;
+    settings.numerical.anderson_verbose = false;
+    settings.numerical.mixing = 0.8;
+    settings.numerical.tolerance = 1e-6;
+    settings.numerical.residual_tolerance = 1e-6;
     settings.numerical.max_iterations = 4000;
     // Write G^R_nm(x) and F^R_nm(x) after EVERY accepted gamma iteration.
     // Use an empty string to disable the output.
