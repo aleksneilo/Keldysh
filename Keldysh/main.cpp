@@ -61,9 +61,10 @@ int main(int argc, char** argv)
     settings.physical.area = 1.0;
     settings.physical.Xi = 0.0;
 
-    settings.numerical.NF = 6;
-    settings.numerical.Nx = 25;
-    settings.numerical.Neps = 16;
+    settings.numerical.NF = 4;
+    settings.numerical.Nx = 49;
+    settings.numerical.Neps = 512;
+    settings.numerical.energy_threads = 0; // All logical processors minus one; 1 disables parallelism.
     settings.numerical.eta = 0.001 * settings.physical.Delta;
     settings.numerical.use_anderson = true; // false restores ordinary Picard.
     settings.numerical.anderson_depth = 6;
@@ -83,8 +84,10 @@ int main(int argc, char** argv)
     //settings.mode = "spectral";
     //settings.mode = "conductance";
 
-    settings.mode = "convergence";
+    //settings.mode = "convergence";
+    settings.mode = "iv";
     settings.voltage = 3.0 * settings.physical.Delta;
+    settings.voltage = 5.28;
 
     settings.sweep_start = 3.0; // eV/Delta (article voltage)
     settings.sweep_end = 2.7;

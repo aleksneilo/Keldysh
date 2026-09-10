@@ -1,7 +1,17 @@
 #include "sns.hpp"
 #include <iostream>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <exception>
 
 namespace sns {
+unsigned energy_worker_count(const NumericalParams& n) {
+    if(n.energy_threads<0 || n.Neps<2)throw std::invalid_argument("invalid energy thread count/grid");
+    unsigned hardware=std::thread::hardware_concurrency();
+    unsigned requested=n.energy_threads?static_cast<unsigned>(n.energy_threads):(hardware>1?hardware-1:1);
+    return std::min(requested,static_cast<unsigned>(n.Neps));
+}
 std::vector<double> voltage_grid(double start,double end,double step) {
     if(!std::isfinite(start)||!std::isfinite(end)||!std::isfinite(step)||step<=0||start<=0||end<=0)
         throw std::invalid_argument("Sweep requires positive finite voltages and step");
@@ -47,34 +57,81 @@ CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams& p,c
     validate(p,n,voltage);
     if(voltage==0) throw std::invalid_argument("V=0 is a stationary spectral BVP; dc voltage-state integral has zero-width zone. Use solve_gamma_for_energy.");
     if(voltage<0 && p.Xi!=0) throw std::invalid_argument("negative-voltage symmetry requires zero initial phase");
-    double v=std::abs(voltage);std::vector<std::vector<double>> integrands(3);int probes[3]={(n.Nx-1)/4,(n.Nx-1)/2,3*(n.Nx-1)/4};
-    CurrentResult result;result.voltage=voltage;PairField previous;
-    if(solutions) solutions->clear();
-    for(int j=0;j<n.Neps;++j) {
-        double eps=2*v*(j+0.5)/n.Neps;const PairField* guess=nullptr;
-        if(initial && initial->size()==size_t(n.Neps)) guess=&initial->at(j);else if(j) guess=&previous;
-        SpectralSolution s;
-        try { s=solve_gamma_for_energy(eps,v,p,n,guess); }
-        catch(const std::runtime_error&) { if(!guess) throw; s=solve_gamma_for_energy(eps,v,p,n); }
-        auto d=solve_distribution_x(s,eps,v,p,n);Field r,a,k;
-        for(int i=0;i<n.Nx;++i) {
-            auto g=compute_retarded_green_functions(s.amplitudes.gamma[i],s.amplitudes.tilde[i]);
-            r.push_back(g.R);a.push_back(g.A);k.push_back(build_keldysh_green_function(s.amplitudes.gamma[i],s.amplitudes.tilde[i],g,d.x[i],d.tilde[i]));
-        }
-        for(int probe=0;probe<3;++probe) integrands[probe].push_back(compute_spectral_current(r,a,k,probes[probe],p.L_N/(n.Nx-1)));
-        result.max_spectral_residual=std::max(result.max_spectral_residual,s.residual);result.max_kinetic_residual=std::max(result.max_kinetic_residual,d.residual);
-
-       /*/ std::cout
-            << "eps = " << eps
-            << ", spectral = " << s.residual
-            << ", kinetic = " << d.residual
-            << ", max kinetic = "
-            << result.max_kinetic_residual
-            << std::endl; /*/
-
-
-        if(solutions) solutions->push_back(s.amplitudes);previous=std::move(s.amplitudes);
+    const unsigned workers=energy_worker_count(n);
+    double v=std::abs(voltage);
+    std::vector<std::vector<double>> integrands(3,std::vector<double>(n.Neps));
+    std::vector<double> spectral_residual(n.Neps),kinetic_residual(n.Neps);
+    int probes[3]={(n.Nx-1)/4,(n.Nx-1)/2,3*(n.Nx-1)/4};
+    CurrentResult result;result.voltage=voltage;
+    // Publish only a complete result, and keep initial valid even if it aliases solutions.
+    std::vector<PairField> computed(solutions?size_t(n.Neps):0);
+    std::vector<std::exception_ptr> errors(workers);
+    std::atomic<bool> stop{false};
+    static std::mutex diagnostic_mutex;
+    if(workers>1) {
+        long double k=2.L*n.NF+1,block=2*k*k;
+        long double mib=workers*(n.Nx-2)*block*block*sizeof(Complex)*6/(1024*1024);
+        std::cerr<<"Energy integration: workers="<<workers<<" Neps="<<n.Neps
+                 <<" kinetic workspace estimate MiB="<<static_cast<double>(mib)<<'\n';
+        if(!n.iteration_log_path.empty() || n.anderson_verbose)
+            std::cerr<<"Spectral diagnostic output enabled: spectral solves are serialized; kinetic solves remain parallel.\n";
     }
+    auto work=[&](unsigned worker) {
+        try {
+            // Contiguous ranges preserve continuation in epsilon within each worker.
+            int begin=static_cast<int>(size_t(n.Neps)*worker/workers);
+            int end=static_cast<int>(size_t(n.Neps)*(worker+1)/workers);
+            PairField previous;
+            for(int j=begin;j<end && !stop.load();++j) {
+                double eps=2*v*(j+0.5)/n.Neps;
+                const PairField* guess=nullptr;
+                if(initial && initial->size()==size_t(n.Neps))guess=&initial->at(j);
+                else if(j>begin)guess=&previous;
+                SpectralSolution s;
+                {
+                    // Protect the existing stream-based G/F and iteration diagnostics.
+                    std::unique_lock<std::mutex> lock(diagnostic_mutex,std::defer_lock);
+                    if(!n.iteration_log_path.empty() || n.anderson_verbose)lock.lock();
+                    try { s=solve_gamma_for_energy(eps,v,p,n,guess); }
+                    catch(const std::runtime_error&) {
+                        if(!guess)throw;
+                        s=solve_gamma_for_energy(eps,v,p,n);
+                    }
+                }
+                auto d=solve_distribution_x(s,eps,v,p,n);Field r,a,k;
+                for(int i=0;i<n.Nx;++i) {
+                    auto g=compute_retarded_green_functions(s.amplitudes.gamma[i],s.amplitudes.tilde[i]);
+                    r.push_back(g.R);a.push_back(g.A);
+                    k.push_back(build_keldysh_green_function(s.amplitudes.gamma[i],s.amplitudes.tilde[i],g,d.x[i],d.tilde[i]));
+                }
+                for(int probe=0;probe<3;++probe)
+                    integrands[probe][j]=compute_spectral_current(r,a,k,probes[probe],p.L_N/(n.Nx-1));
+                spectral_residual[j]=s.residual;kinetic_residual[j]=d.residual;
+                if(solutions)computed[j]=s.amplitudes;
+                previous=std::move(s.amplitudes);
+            }
+        }catch(...) { errors[worker]=std::current_exception();stop.store(true); }
+    };
+    if(workers==1)work(0);
+    else {
+        std::vector<std::thread> threads;
+        threads.reserve(workers);
+        try {
+            for(unsigned worker=0;worker<workers;++worker)threads.emplace_back(work,worker);
+        }catch(...) {
+            stop.store(true);
+            for(auto& thread:threads)thread.join();
+            throw;
+        }
+        for(auto& thread:threads)thread.join();
+    }
+    for(auto error:errors)if(error)std::rethrow_exception(error);
+    // Reduction is serial and ordered by energy, independent of completion order.
+    for(int j=0;j<n.Neps;++j) {
+        result.max_spectral_residual=std::max(result.max_spectral_residual,spectral_residual[j]);
+        result.max_kinetic_residual=std::max(result.max_kinetic_residual,kinetic_residual[j]);
+    }
+    if(solutions)*solutions=std::move(computed);
     for(auto& values:integrands) result.probe_currents.push_back((voltage>0?1.:-1.)*integrate_current_over_quasienergy(values,2*v,p));
     result.current=result.probe_currents[1];double spread=0;for(double x:result.probe_currents)spread=std::max(spread,std::abs(x-result.current));
     result.conservation_error=spread/std::max(std::abs(result.current),1e-12*p.conductance()*v);
@@ -103,7 +160,7 @@ std::vector<CurrentResult> compute_IV_curve(const std::vector<double>& voltages,
         double error=std::abs(val-base)/std::max(std::abs(val),1e-12*p.conductance()*std::abs(v));out.push_back({name,base,val,error,error<tol});
     }return out;
 }/*/
-std::vector<ConvergenceResult>
+/*/std::vector<ConvergenceResult>
 check_current_convergence(
     double v,
     const PhysicalParams& p,
@@ -141,14 +198,6 @@ check_current_convergence(
         << "\nI_refined = " << val
         << "\nrelative change = " << error
         << std::endl;
-
-    /*/std::cout
-        << "\nChecking Neps: "
-        << n.Neps
-        << " -> "
-        << refined.Neps
-        << std::endl;/*/
-
     
 
     out.push_back({
@@ -158,6 +207,78 @@ check_current_convergence(
         error,
         error < tol
         });
+
+    return out;
+}/*/
+std::vector<ConvergenceResult>
+check_current_convergence(
+    double v,
+    const PhysicalParams& p,
+    const NumericalParams& n,
+    double tol)
+{
+    std::vector<ConvergenceResult> out;
+
+    // Значения Nx, которые хотим проверить
+    std::vector<int> Nx_values = { 25, 49, 97 };
+
+    std::vector<double> currents;
+
+    // Каждый Nx считаем только один раз
+    for (int Nx : Nx_values)
+    {
+        NumericalParams test = n;
+        test.Nx = Nx;
+
+        std::cout
+            << "\n=========================\n"
+            << "Calculating Nx = " << Nx
+            << ", NF = " << test.NF
+            << ", Neps = " << test.Neps
+            << ", eta = " << test.eta
+            << "\n========================="
+            << std::endl;
+
+        double I =
+            solve_current_for_voltage(v, p, test).current;
+
+        currents.push_back(I);
+
+        std::cout
+            << "Nx = " << Nx
+            << ", I = " << I
+            << std::endl;
+    }
+
+    // Сравниваем:
+    // 25 -> 49
+    // 49 -> 97
+    for (size_t i = 0; i + 1 < Nx_values.size(); ++i)
+    {
+        double base = currents[i];
+        double refined = currents[i + 1];
+
+        double error =
+            std::abs(refined - base) /
+            std::max(
+                std::abs(refined),
+                1e-12 * p.conductance() * std::abs(v)
+            );
+
+        std::string name =
+            "Nx " +
+            std::to_string(Nx_values[i]) +
+            " -> " +
+            std::to_string(Nx_values[i + 1]);
+
+        out.push_back({
+            name,
+            base,
+            refined,
+            error,
+            error < tol
+            });
+    }
 
     return out;
 }

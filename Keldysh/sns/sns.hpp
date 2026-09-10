@@ -20,6 +20,7 @@ struct NumericalParams {
     double eta=0.00176, mixing=0.15, tolerance=1e-8;
     double residual_tolerance=1e-6, kinetic_tolerance=1e-6;
     int continuation_steps=4;
+    int energy_threads=1; // 0: hardware threads minus one; 1: serial; >1: explicit count.
     bool use_anderson=false, anderson_verbose=false;
     int anderson_depth=4, anderson_start=2;
     double anderson_regularization=1e-10, anderson_coefficient_limit=20.0;
@@ -68,6 +69,7 @@ double integrate_current_over_quasienergy(const std::vector<double>& integrand,d
 CurrentResult solve_current_for_voltage(double voltage,const PhysicalParams&,const NumericalParams&,const std::vector<PairField>* initial=nullptr,std::vector<PairField>* solutions=nullptr);
 std::vector<CurrentResult> compute_IV_curve(const std::vector<double>& voltages,const PhysicalParams&,const NumericalParams&);
 std::vector<ConvergenceResult> check_current_convergence(double voltage,const PhysicalParams&,const NumericalParams&,double tolerance=1e-3);
+unsigned energy_worker_count(const NumericalParams&);
 std::vector<double> voltage_grid(double start,double end,double step);
 std::vector<double> differentiate_current(const std::vector<double>& voltage,const std::vector<double>& current);
 } // namespace sns

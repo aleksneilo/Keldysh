@@ -4,6 +4,7 @@
 #include <sstream>
 #include <chrono>
 #include <cstdio>
+#include <thread>
 
 static void require(bool ok,const char* msg) { if(!ok) throw std::runtime_error(msg); }
 static void test_GF_iteration_output(double voltage) {
@@ -136,8 +137,66 @@ static void test_anderson() {
     bool invalid=false;try{validate(p,bad,v);}catch(const std::invalid_argument&){invalid=true;}
     require(invalid,"invalid Anderson depth rejected");
 }
+static void test_energy_parallelism() {
+    using namespace sns;
+    PhysicalParams p;p.L_N=std::sqrt(p.diffusion()/p.Delta);
+    NumericalParams serial;serial.NF=2;serial.Nx=25;serial.Neps=32;
+    serial.use_anderson=true;serial.residual_tolerance=1e-7;serial.kinetic_tolerance=1e-8;
+    NumericalParams parallel=serial;parallel.energy_threads=0;
+    unsigned hw=std::thread::hardware_concurrency();
+    require(energy_worker_count(parallel)==std::min(unsigned(serial.Neps),hw>1?hw-1:1),"automatic all-but-one threads");
+    std::vector<PairField> sequentialFields,parallelFields;
+    auto start=std::chrono::steady_clock::now();
+    auto a=solve_current_for_voltage(2*p.Delta,p,serial,nullptr,&sequentialFields);
+    double serialSeconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+    start=std::chrono::steady_clock::now();
+    auto b=solve_current_for_voltage(2*p.Delta,p,parallel,nullptr,&parallelFields);
+    double parallelSeconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+    double difference=std::abs(a.current-b.current)/(p.conductance()*p.Delta),fieldError=0;
+    require(difference<1e-6,"parallel normalized current matches serial");
+    require(parallelFields.size()==size_t(serial.Neps),"all energy solutions saved");
+    for(size_t j=0;j<parallelFields.size();++j)
+        for(int i=0;i<serial.Nx;++i) {
+            fieldError=std::max(fieldError,norm(sequentialFields[j].gamma[i]-parallelFields[j].gamma[i]));
+            fieldError=std::max(fieldError,norm(sequentialFields[j].tilde[i]-parallelFields[j].tilde[i]));
+        }
+    require(fieldError<3e-6,"parallel fields retain energy ordering");
+    auto repeated=solve_current_for_voltage(2*p.Delta,p,parallel);
+    require(repeated.current==b.current,"parallel deterministic repeated reduction");
+    parallel.energy_threads=2;
+    auto warmSerial=solve_current_for_voltage(1.9*p.Delta,p,serial,&sequentialFields);
+    auto warmParallel=solve_current_for_voltage(1.9*p.Delta,p,parallel,&sequentialFields);
+    require(warmSerial.current==warmParallel.current,"same per-energy initial gives exact serial/parallel current");
+    std::cout<<"PARALLEL workers="<<energy_worker_count(NumericalParams{parallel})
+             <<" auto_workers="<<std::min(unsigned(serial.Neps),hw>1?hw-1:1)
+             <<" serial_seconds="<<serialSeconds<<" auto_seconds="<<parallelSeconds
+             <<" normalized_current_difference="<<difference<<" field_difference="<<fieldError<<'\n';
+    // Worker exceptions return to the caller, with no partial solutions published.
+    NumericalParams fail=parallel;fail.max_block_bytes=1;fail.Neps=4;
+    std::vector<PairField> saved(1);
+    bool caught=false;try{solve_current_for_voltage(2*p.Delta,p,fail,nullptr,&saved);}
+    catch(const std::runtime_error&){caught=true;}
+    require(caught && saved.size()==1,"worker exception propagated without partial publication");
+    p.Delta=0;parallel.NF=1;parallel.Nx=5;parallel.Neps=4;
+    parallel.iteration_log_path="sns_parallel_log_"+std::to_string(
+        std::chrono::high_resolution_clock::now().time_since_epoch().count())+".txt";
+    struct CleanupLog {std::string path;~CleanupLog(){std::remove(path.c_str());}} cleanup{parallel.iteration_log_path};
+    auto normal=solve_current_for_voltage(2,p,parallel);
+    require(std::abs(normal.current/(p.conductance()*2)-1)<1e-10,"parallel normal Ohm law");
+    std::ifstream log(parallel.iteration_log_path);std::string line;
+    int open=0,blocks=0;
+    while(std::getline(log,line)) {
+        if(line.find("# BEGIN")==0){require(open==0,"parallel log blocks do not interleave");++open;++blocks;}
+        if(line.find("# END")==0){require(open==1,"parallel log block end");--open;}
+    }
+    require(open==0 && blocks==parallel.Neps,"all parallel energy logs complete");
+    parallel.energy_threads=-1;caught=false;
+    try{validate(p,parallel,2);}catch(const std::invalid_argument&){caught=true;}
+    require(caught,"negative worker count rejected");
+}
 int main() {
     try {
+        test_energy_parallelism();
         test_anderson();
         test_GF_iteration_output(0);
         test_GF_iteration_output(3.52);

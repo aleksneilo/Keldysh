@@ -4,12 +4,15 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <iostream>
+#include <mutex>
 
 namespace sns {
 void validate(const PhysicalParams& p,const NumericalParams& n,double v) {
     for(double q:{p.Delta,p.T,p.Ksi_N,p.L_N,p.ro_N,p.area,p.Xi,v,n.eta,n.mixing,n.tolerance,n.residual_tolerance,n.kinetic_tolerance})
         if(!std::isfinite(q)) throw std::invalid_argument("parameters must be finite");
+    if(n.energy_threads<0)throw std::invalid_argument("energy_threads must be >= 0");
     if(n.anderson_depth<1 || n.anderson_depth>1000 || n.anderson_start<0 ||
        !std::isfinite(n.anderson_regularization) || n.anderson_regularization<0 ||
        !std::isfinite(n.anderson_coefficient_limit) || n.anderson_coefficient_limit<=0)
@@ -359,14 +362,18 @@ SpectralSolution solve_gamma_for_energy(double eps,double v,const PhysicalParams
         }
         if(!converged) { std::ostringstream msg;msg<<"spectral iteration limit: eps/Delta="<<eps/(p.Delta?p.Delta:1)<<", residual="<<s.residual;throw std::runtime_error(msg.str()); }
     }
-    std::cout
+    {
+    static std::mutex final_output_mutex;
+    std::lock_guard<std::mutex> output_lock(final_output_mutex);
+    /*/std::cout
         << "FINAL: "
         << "eps = " << eps
         << ", iterations = " << s.iterations
         << ", change = " << s.change
         << ", residual = " << s.residual
         << ", residual_tolerance = " << n.residual_tolerance
-        << std::endl;
+        << std::endl;/*/
+    }
     if (iteration_output.is_open())
         iteration_output << "# END converged: iterations=" << s.iterations
             << " residual=" << s.residual << "\n\n";
